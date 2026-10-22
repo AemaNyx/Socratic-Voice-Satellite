@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Socratic Scribe - Live Voice</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,500;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #141614;
+      --card-bg: #1E201D;
+      --text: #EDECE8;
+      --text-muted: #9EA299;
+      --salvia: #96E5DB;
+      --cossack: #4BA842;
+      --border: #2E332C;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background-color: var(--bg); color: var(--text);
+      font-family: 'Inter', sans-serif; overflow: hidden;
+    }
+    .voice-container {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: space-between; height: 100vh; height: 100dvh;
+      padding: 48px 24px; text-align: center;
+    }
+    .topic-pill {
+      background-color: var(--card-bg); border: 1px solid var(--border);
+      color: var(--salvia); font-size: 13px; font-weight: 500;
+      padding: 6px 14px; border-radius: 20px; max-width: 90vw;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .status-title {
+      font-family: 'Lora', serif; font-size: 24px; margin-top: 14px;
+    }
+    .transcript-box {
+      font-size: 14px; color: var(--text-muted); max-width: 500px;
+      min-height: 54px; line-height: 1.5; margin-top: 8px;
+    }
+    .orb-stage {
+      position: relative; width: 200px; height: 200px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .voice-orb {
+      width: 140px; height: 140px; border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, var(--salvia), var(--cossack));
+      box-shadow: 0 0 45px rgba(75, 168, 66, 0.4);
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+      cursor: pointer;
+    }
+    .voice-orb.listening {
+      animation: orb-breathe 2.4s infinite ease-in-out;
+      box-shadow: 0 0 65px rgba(75, 168, 66, 0.6);
+    }
+    .voice-orb.speaking {
+      animation: orb-speak 0.75s infinite alternate ease-in-out;
+      box-shadow: 0 0 70px rgba(150, 229, 219, 0.75);
+    }
+    @keyframes orb-breathe {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.15); }
+    }
+    @keyframes orb-speak {
+      0% { transform: scale(0.96); }
+      100% { transform: scale(1.22); }
+    }
+    .btn-bar { display: flex; gap: 16px; align-items: center; }
+    .icon-btn {
+      background: var(--card-bg); border: 1px solid var(--border);
+      color: var(--text); width: 56px; height: 56px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="voice-container">
+    <div>
+      <div id="topic-display" class="topic-pill">Socratic Scribe · Initializing</div>
+      <div id="status-label" class="status-title">Connecting...</div>
+      <div id="transcript-sub" class="transcript-box">Awaiting connection to your Law Assistant hub...</div>
+    </div>
+
+    <div class="orb-stage">
+      <div id="voice-orb" class="voice-orb" onclick="toggleMic()"></div>
+    </div>
+
+    <div class="btn-bar">
+      <button class="icon-btn" title="Toggle Mic" onclick="toggleMic()">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+      <button class="icon-btn" title="Close" onclick="window.close()">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    var hubOrigin = "*";
+    var recognition = null;
+    var isListening = false;
+    var synth = window.speechSynthesis;
+    var currentUtterance = null;
+
+    // Listen for replies and state updates sent from Apps Script Index.html
+    window.addEventListener("message", function(event) {
+      var msg = event.data;
+      if (!msg || typeof msg !== "object") return;
+
+      if (msg.type === "HUB_SYNC") {
+        document.getElementById("topic-display").textContent = msg.topicTitle ? (msg.topicTitle + " · Score: " + msg.barScore + "/5") : "Socratic Scribe Active";
+        setOrb("listening", "Listening...", "Recite the rule, elements, or case doctrine...");
+        startRecognition();
+      } else if (msg.type === "BOT_REPLY") {
+        document.getElementById("topic-display").textContent = msg.topicTitle ? (msg.topicTitle + " · Score: " + msg.barScore + "/5") : "Socratic Scribe Active";
+        speak(msg.replyText);
+      }
+    });
+
+    function initSpeech() {
+      var Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Speech) {
+        alert("Speech Recognition not supported in this browser. Please use Chrome, Edge, or Safari.");
+        return;
+      }
+      recognition = new Speech();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = function() {
+        isListening = true;
+        setOrb("listening", "Listening...", "Speak your recitation clearly...");
+      };
+
+      recognition.onresult = function(e) {
+        var text = "";
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          text += e.results[i][0].transcript;
+        }
+        document.getElementById("transcript-sub").textContent = text;
+        if (e.results[0].isFinal) {
+          recognition.stop();
+          setOrb("", "Consulting Scribe...", '"' + text + '"');
+          relayToHub(text);
+        }
+      };
+
+      recognition.onerror = function(e) {
+        if (e.error !== 'no-speech') {
+          console.error("Speech error:", e.error);
+          setOrb("", "Microphone Paused", "Tap the orb to resume.");
+        }
+      };
+
+      recognition.onend = function() {
+        isListening = false;
+      };
+    }
+
+    function toggleMic() {
+      if (isListening) {
+        if (recognition) recognition.stop();
+        setOrb("", "Mic Muted", "Tap orb to speak.");
+      } else {
+        startRecognition();
+      }
+    }
+
+    function startRecognition() {
+      if (!recognition) initSpeech();
+      if (synth && synth.speaking) synth.cancel();
+      try {
+        recognition.start();
+      } catch (err) {}
+    }
+
+    function relayToHub(spokenText) {
+      if (window.opener) {
+        window.opener.postMessage({
+          type: "VOICE_TRANSCRIBED",
+          text: spokenText
+        }, hubOrigin);
+      } else {
+        alert("Lost connection to main hub. Please reopen voice mode from your Law Study tab.");
+      }
+    }
+
+    function speak(text) {
+      if (!synth) return;
+      if (synth.paused) synth.resume();
+      synth.cancel();
+
+      var clean = (text || '').replace(/```[\s\S]*?```/g, '').replace(/https?:\/\/\S+/g, '').replace(/[*#_~`>]/g, '').trim();
+      currentUtterance = new SpeechSynthesisUtterance(clean);
+      currentUtterance.rate = 1.05;
+      currentUtterance.lang = 'en-US';
+
+      currentUtterance.onstart = function() {
+        setOrb("speaking", "Socratic Scribe Speaking...", clean);
+      };
+
+      currentUtterance.onend = function() {
+        setOrb("listening", "Listening...", "Your turn, Counsel...");
+        setTimeout(startRecognition, 350);
+      };
+
+      setTimeout(function() {
+        synth.resume();
+        synth.speak(currentUtterance);
+      }, 50);
+    }
+
+    function setOrb(stateClass, status, sub) {
+      var orb = document.getElementById("voice-orb");
+      orb.className = "voice-orb " + stateClass;
+      document.getElementById("status-label").textContent = status;
+      if (sub) document.getElementById("transcript-sub").textContent = sub;
+    }
+
+    window.onload = function() {
+      initSpeech();
+      // Signal opener that satellite is ready
+      if (window.opener) {
+        window.opener.postMessage({ type: "SATELLITE_READY" }, hubOrigin);
+      }
+    };
+  </script>
+</body>
+</html>
