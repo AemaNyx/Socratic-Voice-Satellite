@@ -111,6 +111,7 @@
     var isListening = false;
     var synth = window.speechSynthesis;
     var currentUtterance = null;
+    var currentAudio = null;
 
     // Listen for replies and state updates sent from Apps Script Index.html
     window.addEventListener("message", function(event) {
@@ -123,9 +124,47 @@
         startRecognition();
       } else if (msg.type === "BOT_REPLY") {
         document.getElementById("topic-display").textContent = msg.topicTitle ? (msg.topicTitle + " · Score: " + msg.barScore + "/5") : "Socratic Scribe Active";
-        speak(msg.replyText);
+        
+        // Stop speech recognition while assistant is speaking
+        if (recognition) {
+          try { recognition.stop(); } catch (e) {}
+        }
+        isListening = false;
+
+        // Prioritize Google Cloud Neural2 MP3 stream
+        if (msg.audioBase64) {
+          playServerAudio(msg.audioBase64, msg.replyText);
+        } else if (msg.replyText) {
+          speak(msg.replyText);
+        }
       }
     });
+
+    function playServerAudio(base64Audio, displayText) {
+      if (synth && synth.speaking) synth.cancel();
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
+
+      currentAudio = new Audio("data:audio/mp3;base64," + base64Audio);
+      setOrb("speaking", "Socratic Scribe Speaking...", displayText || "Reviewing recitation...");
+
+      currentAudio.onended = function() {
+        setOrb("listening", "Listening...", "Your turn, Counsel...");
+        setTimeout(startRecognition, 350);
+      };
+
+      currentAudio.onerror = function(err) {
+        console.error("Audio playback error, falling back to speech synthesis:", err);
+        speak(displayText);
+      };
+
+      currentAudio.play().catch(function(e) {
+        console.warn("Autoplay or playback issue:", e);
+        speak(displayText);
+      });
+    }
 
     function initSpeech() {
       var Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -169,6 +208,12 @@
     }
 
     function toggleMic() {
+      if (currentAudio && !currentAudio.paused) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
+      if (synth && synth.speaking) synth.cancel();
+
       if (isListening) {
         if (recognition) recognition.stop();
         setOrb("", "Mic Muted", "Tap orb to speak.");
@@ -178,8 +223,13 @@
     }
 
     function startRecognition() {
-      if (!recognition) initSpeech();
+      if (currentAudio && !currentAudio.paused) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
       if (synth && synth.speaking) synth.cancel();
+
+      if (!recognition) initSpeech();
       try {
         recognition.start();
       } catch (err) {}
@@ -197,6 +247,10 @@
     }
 
     function speak(text) {
+      if (currentAudio && !currentAudio.paused) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
       if (!synth) return;
       if (synth.paused) synth.resume();
       synth.cancel();
@@ -230,7 +284,6 @@
 
     window.onload = function() {
       initSpeech();
-      // Signal opener that satellite is ready
       if (window.opener) {
         window.opener.postMessage({ type: "SATELLITE_READY" }, hubOrigin);
       }
